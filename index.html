@@ -5,6 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Eye Level Singapore – Franchise Qualification Quiz</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Meta Pixel Code -->
+  <script>
+    !function(f,b,e,v,n,t,s)
+    {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+    n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];
+    s.parentNode.insertBefore(t,s)}(window, document,'script',
+    'https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', '928325747234363');
+    fbq('track', 'PageView');
+  </script>
+  <noscript>
+    <img height="1" width="1" style="display:none"
+      src="https://www.facebook.com/tr?id=928325747234363&ev=PageView&noscript=1" />
+  </noscript>
+  <!-- End Meta Pixel Code -->
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -539,6 +558,15 @@
     answers = [];
     step = 1;
     sendToGHL('quiz_started');
+    if (typeof fbq !== 'undefined') {
+      // Re-init with Advanced Matching so this Pixel event ties to a real
+      // person (improves attribution + audience match rates in Meta).
+      fbq('init', '928325747234363', {
+        em: userEmail.toLowerCase(),
+        fn: userName.toLowerCase(),
+      });
+      fbq('track', 'Lead', { content_name: 'Eye Level Franchise Quiz - Started' });
+    }
     fadeCard(() => { renderQuestion(); updateProgress(); showScreen('screen-question'); });
   }
 
@@ -586,6 +614,16 @@
     if (step >= QUESTIONS.length) {
       step = QUESTIONS.length + 1;
       sendToGHL('quiz_completed');
+      if (typeof fbq !== 'undefined') {
+        const totalScore = answers.reduce((s, a) => s + a.score, 0);
+        const res = getResult(totalScore);
+        fbq('track', 'CompleteRegistration', {
+          content_name: 'Eye Level Franchise Quiz - Completed',
+          status: res.label,
+          value: Math.round((totalScore / MAX_SCORE) * 100),
+          currency: 'SGD',
+        });
+      }
       fadeCard(() => { updateProgress(); showResults(); showScreen('screen-result'); });
     } else {
       sendToGHL('question_answered');
@@ -624,6 +662,14 @@
     const pct = Math.round((totalScore / MAX_SCORE) * 100);
     const res = getResult(totalScore);
     sendToGHL('whatsapp_clicked');
+    if (typeof fbq !== 'undefined') {
+      fbq('track', 'Contact', {
+        content_name: 'Eye Level Franchise Quiz - WhatsApp Click',
+        status: res.label,
+        value: pct,
+        currency: 'SGD',
+      });
+    }
     const msg = encodeURIComponent(`Hi Eye Level Singapore! I'm ${userName}. I completed your franchise quiz and received "${res.label}" (${pct}% match). I'd love to learn more about opening a centre!`);
     window.open(`https://wa.me/${WHATSAPP}?text=${msg}`, '_blank');
   }
