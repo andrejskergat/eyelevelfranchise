@@ -88,13 +88,14 @@
       display: block; font-size: 13px; font-weight: 700;
       color: #231F20; margin-bottom: 8px;
     }
-    input[type="text"] {
+    input[type="text"], input[type="email"] {
       width: 100%; padding: 13px 16px; border-radius: 12px; font-size: 15px;
       border: 1.5px solid #DDE4EF; outline: none;
       font-family: 'DM Sans', sans-serif; color: #231F20; margin-bottom: 22px;
       transition: border 0.2s, box-shadow 0.2s;
+      box-sizing: border-box;
     }
-    input[type="text"]:focus {
+    input[type="text"]:focus, input[type="email"]:focus {
       border-color: #005BAA;
       box-shadow: 0 0 0 3px #005BAA20;
     }
@@ -224,6 +225,8 @@
       <p class="subtitle">Answer 7 quick questions to see if you qualify to open your own Eye Level centre in Singapore. Takes less than 2 minutes.</p>
       <label class="name-label" for="name-input">Your first name</label>
       <input type="text" id="name-input" placeholder="e.g. Sarah" autocomplete="given-name" />
+      <label class="name-label" for="email-input">Your email address</label>
+      <input type="email" id="email-input" placeholder="e.g. sarah@email.com" autocomplete="email" />
       <button class="btn-primary" id="start-btn" onclick="handleStart()" disabled>Start the Quiz →</button>
       <p class="privacy-note">🔒 Your responses are confidential and only shared with Eye Level Singapore.</p>
     </div>
@@ -282,6 +285,66 @@
   // ── DATA ──────────────────────────────────────────────────────────────────
   const WHATSAPP = "6563976117";
   const MAX_SCORE = 21;
+
+  // ── GHL WEBHOOK CONFIG ───────────────────────────────────────────────────
+  // Paste your GoHighLevel "Inbound Webhook" trigger URL below.
+  // Workflow: Automation → Workflows → Create Workflow → Trigger: Inbound Webhook
+  const GHL_WEBHOOK_URL = "https://services.leadconnectorhq.com/hooks/Xb0ba9f5Bt06ViEBKEph/webhook-trigger/mScoiucKKvUpOS2ZYxCa";
+
+  // Stable per-visit session ID so GHL can tie every partial event
+  // (Q1, Q2, ... completion) back to the same lead as they progress.
+  function getSessionId() {
+    let sid = sessionStorage.getItem('el_quiz_session_id');
+    if (!sid) {
+      sid = 'el_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem('el_quiz_session_id', sid);
+    }
+    return sid;
+  }
+
+  // Sends quiz progress/completion data to the GHL webhook.
+  // eventType: "question_answered" | "quiz_completed" | "whatsapp_clicked"
+  function sendToGHL(eventType, extra = {}) {
+    if (!GHL_WEBHOOK_URL || GHL_WEBHOOK_URL.startsWith('PASTE_')) {
+      console.warn('GHL_WEBHOOK_URL not configured — skipping webhook send.');
+      return;
+    }
+
+    const totalScore = answers.reduce((s, a) => s + a.score, 0);
+
+    const payload = {
+      sessionId: getSessionId(),
+      eventType: eventType,
+      firstName: userName || null,
+      email: userEmail || null,
+      currentQuestion: step,
+      totalQuestions: QUESTIONS.length,
+      isComplete: step > QUESTIONS.length,
+      answers: answers.map((a, i) => ({
+        questionNumber: i + 1,
+        questionText: QUESTIONS[i] ? QUESTIONS[i].question : null,
+        answerLabel: a.label,
+        answerScore: a.score,
+      })),
+      totalScore: totalScore,
+      maxScore: MAX_SCORE,
+      scorePercent: Math.round((totalScore / MAX_SCORE) * 100),
+      resultTier: answers.length === QUESTIONS.length ? getResult(totalScore).label : null,
+      source: "Eye Level Franchise Quiz",
+      pageUrl: window.location.href,
+      timestamp: new Date().toISOString(),
+      ...extra,
+    };
+
+    // fetch with keepalive so the request still completes even if the
+    // user navigates away (e.g. clicking the WhatsApp button) right after.
+    fetch(GHL_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(err => console.error('GHL webhook send failed:', err));
+  }
 
   const QUESTIONS = [
     {
@@ -369,6 +432,7 @@
   let answers = [];
   let selected = null;
   let userName = "";
+  let userEmail = "";
 
   // ── GAUGE ─────────────────────────────────────────────────────────────────
   function toXY(deg, r, cx, cy) {
@@ -448,19 +512,33 @@
   }
 
   // ── INTRO ─────────────────────────────────────────────────────────────────
-  document.getElementById('name-input').addEventListener('input', function() {
-    document.getElementById('start-btn').disabled = !this.value.trim();
-    userName = this.value.trim();
-  });
+  function isValidEmail(email) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  }
+
+  function checkIntroValid() {
+    const name = document.getElementById('name-input').value.trim();
+    const email = document.getElementById('email-input').value.trim();
+    document.getElementById('start-btn').disabled = !(name && isValidEmail(email));
+  }
+
+  document.getElementById('name-input').addEventListener('input', checkIntroValid);
+  document.getElementById('email-input').addEventListener('input', checkIntroValid);
+
   document.getElementById('name-input').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' && this.value.trim()) handleStart();
+    if (e.key === 'Enter') document.getElementById('email-input').focus();
+  });
+  document.getElementById('email-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !document.getElementById('start-btn').disabled) handleStart();
   });
 
   function handleStart() {
     userName = document.getElementById('name-input').value.trim();
-    if (!userName) return;
+    userEmail = document.getElementById('email-input').value.trim();
+    if (!userName || !isValidEmail(userEmail)) return;
     answers = [];
     step = 1;
+    sendToGHL('quiz_started');
     fadeCard(() => { renderQuestion(); updateProgress(); showScreen('screen-question'); });
   }
 
@@ -504,10 +582,13 @@
   function handleNext() {
     if (!selected) return;
     answers.push(selected);
+
     if (step >= QUESTIONS.length) {
       step = QUESTIONS.length + 1;
+      sendToGHL('quiz_completed');
       fadeCard(() => { updateProgress(); showResults(); showScreen('screen-result'); });
     } else {
+      sendToGHL('question_answered');
       step++;
       fadeCard(() => { updateProgress(); renderQuestion(); });
     }
@@ -542,14 +623,17 @@
     const totalScore = answers.reduce((s, a) => s + a.score, 0);
     const pct = Math.round((totalScore / MAX_SCORE) * 100);
     const res = getResult(totalScore);
+    sendToGHL('whatsapp_clicked');
     const msg = encodeURIComponent(`Hi Eye Level Singapore! I'm ${userName}. I completed your franchise quiz and received "${res.label}" (${pct}% match). I'd love to learn more about opening a centre!`);
     window.open(`https://wa.me/${WHATSAPP}?text=${msg}`, '_blank');
   }
 
   // ── RESET ─────────────────────────────────────────────────────────────────
   function reset() {
-    step = 0; answers = []; selected = null; userName = '';
+    step = 0; answers = []; selected = null; userName = ''; userEmail = '';
+    sessionStorage.removeItem('el_quiz_session_id');
     document.getElementById('name-input').value = '';
+    document.getElementById('email-input').value = '';
     document.getElementById('start-btn').disabled = true;
     fadeCard(() => { updateProgress(); showScreen('screen-intro'); });
   }
