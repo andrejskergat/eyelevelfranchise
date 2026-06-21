@@ -330,6 +330,24 @@
     }
 
     const totalScore = answers.reduce((s, a) => s + a.score, 0);
+    const pct = Math.round((totalScore / MAX_SCORE) * 100);
+    const tier = answers.length === QUESTIONS.length ? getResult(totalScore).label : null;
+
+    // GHL's "Update Contact Field" picker reads custom data from a
+    // `customField` object in the webhook payload (confirmed against a
+    // working reference workflow: {{inboundWebhookRequest.customField.xxx}}).
+    // Flat top-level keys don't reliably surface in that picker, so all
+    // quiz-specific data goes under customField here.
+    const customField = {};
+    answers.forEach((a, i) => {
+      customField[`q${i + 1}_question`] = QUESTIONS[i] ? QUESTIONS[i].question : '';
+      customField[`q${i + 1}_answer`] = a.label;
+      customField[`q${i + 1}_score`] = a.score;
+    });
+    customField.total_score = totalScore;
+    customField.max_score = MAX_SCORE;
+    customField.score_percent = pct;
+    customField.result_tier = tier;
 
     const payload = {
       sessionId: getSessionId(),
@@ -339,16 +357,18 @@
       currentQuestion: step,
       totalQuestions: QUESTIONS.length,
       isComplete: step > QUESTIONS.length,
-      answers: answers.map((a, i) => ({
+      customField: customField,
+      // Nested version kept too, in case you want raw JSON for other tools.
+      answersJson: JSON.stringify(answers.map((a, i) => ({
         questionNumber: i + 1,
         questionText: QUESTIONS[i] ? QUESTIONS[i].question : null,
         answerLabel: a.label,
         answerScore: a.score,
-      })),
+      }))),
       totalScore: totalScore,
       maxScore: MAX_SCORE,
-      scorePercent: Math.round((totalScore / MAX_SCORE) * 100),
-      resultTier: answers.length === QUESTIONS.length ? getResult(totalScore).label : null,
+      scorePercent: pct,
+      resultTier: tier,
       source: "Eye Level Franchise Quiz",
       pageUrl: window.location.href,
       timestamp: new Date().toISOString(),
